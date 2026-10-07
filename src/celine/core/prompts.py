@@ -42,6 +42,12 @@ CAPABILITY_RULES = (
     "local system time; open_application opens one approved application by "
     "name; control_window performs one approved window action; and type_text "
     "appends plain text to Notepad only. "
+    "A successful type_text result confirms only that the requested text was "
+    "inserted or appended; it does not reveal or confirm the complete "
+    "document contents. Never claim to know the full resulting document "
+    "unless a tool has actually read and returned it. "
+    "Clearly distinguish actions you performed, information you actually "
+    "observed or read through tools, and information you merely inferred. "
     "You must never claim to have performed an action unless a tool result "
     "confirms it. "
 )

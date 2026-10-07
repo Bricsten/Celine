@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from celine.core import prompts
 from celine.core.assistant import Assistant
 
 
@@ -56,3 +57,11 @@ def test_tool_result_is_returned_into_the_conversation():
 
     schema_names = [t["function"]["name"] for t in chat.seen_tools]
     assert "get_current_time" in schema_names
+
+
+def test_prompt_limits_type_text_success_to_confirmed_action():
+    prompt = prompts.SYSTEM_PROMPT
+    assert "requested text was inserted or appended" in prompt
+    assert "does not reveal or confirm the complete document contents" in prompt
+    assert "unless a tool has actually read and returned it" in prompt
+    assert "information you merely inferred" in prompt
