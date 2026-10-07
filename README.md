@@ -3,18 +3,21 @@
 Celine is a minimal, local AI assistant that runs entirely on your own
 machine through [Ollama](https://ollama.com). She chats in the terminal,
 keeps the conversation in memory, and calls tools through a fixed, safe
-tool-calling architecture — currently the current time plus opening and
-controlling a small allowlist of Windows applications.
+tool-calling architecture — currently the current time, opening and controlling
+a small allowlist of Windows applications, and Notepad-only text entry.
 
 ## Current milestone
 
-**Milestone 4.2 — safe window control.**
-Celine can open a fixed allowlist of desktop applications and can minimise,
-restore, focus, or gracefully close their visible top-level windows. The
-approved applications are `notepad`, `calculator`, `word`, and
-`file_explorer`. Executable paths and window-matching rules are hardcoded;
-window titles, regular expressions, process IDs, and handles never come from
-model input.
+**Milestone 4.3A — safe Notepad text entry.**
+Celine can append plain Unicode text to the editable document of an already-
+running Notepad. Notepad is located through fixed process and window rules,
+then its editable child is verified through fixed UI Automation control rules.
+No global keyboard input, clipboard, arbitrary handle, PID, title, or regular
+expression comes from model input.
+
+Example supported request: `Open Notepad and write Hello from Celine.` The
+agent can call `open_application` and then `type_text` through the normal tool
+loop; `type_text` itself never opens Notepad.
 
 ## Prerequisites
 
@@ -87,6 +90,7 @@ src/celine/
     system_time.py     # get_current_time implementation
     windows_apps.py    # open_application allowlist + launcher (no shell)
     window_control.py  # fixed matching + approved window actions
+    text_input.py      # control-scoped, Notepad-only text append
     registry.py        # fixed whitelist, schemas, validation
 tests/
   test_tool_registry.py
@@ -94,6 +98,7 @@ tests/
   test_perf.py
   test_open_application.py
   test_window_control.py
+  test_text_input.py
 run.py                 # launcher: puts src/ on the path, starts main
 pytest.ini             # test config (src/ on path, tests/ folder)
 ```
@@ -116,13 +121,16 @@ pytest.ini             # test config (src/ on path, tests/ folder)
 - Local chat with `qwen3:4b-instruct` via Ollama's `/api/chat`
 - In-memory conversation history (per session)
 - Native tool calling with a fixed whitelist registry
-- Three tools: `get_current_time()` (no arguments),
+- Four tools: `get_current_time()` (no arguments),
   `open_application(name)`, and
-  `control_window(application, action)`
+  `control_window(application, action)`, and
+  `type_text(application, text)`
 - The application allowlist is `notepad`, `calculator`, `word`, and
   `file_explorer`
 - Approved window actions are `minimize`, `restore`, `focus`, and `close`;
   close posts a normal window-close request rather than killing a process
+- Text entry is restricted to Notepad, appends at the end of existing content,
+  accepts ordinary Unicode, and is limited to 10,000 characters per call
 - App names are trimmed/lowercased and alias-mapped; anything outside
   the allowlist (arbitrary strings, paths, commands) is rejected
 - Unknown tools rejected safely; tool arguments validated
@@ -133,8 +141,9 @@ pytest.ini             # test config (src/ on path, tests/ folder)
 
 - Window control applies only to visible top-level windows matched by fixed,
   code-owned rules for the four approved applications
-- No typing, clicking, keyboard/mouse automation, screenshots, or control of
-  arbitrary/unapproved windows
+- No typing into Word or other applications, clicking, global keyboard/mouse
+  automation, keyboard shortcuts, screenshots, or arbitrary window control
+- No document saving, file opening, formatting, or unrestricted clipboard use
 - No arbitrary titles, regular expressions, process IDs, or window handles
 - No process termination or force-killing
 - No file access, shell/PowerShell execution, or web search
