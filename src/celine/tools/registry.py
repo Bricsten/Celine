@@ -7,7 +7,7 @@ for a tool by name; nothing outside TOOL_REGISTRY will ever run.
 import json
 
 from celine.tools.system_time import get_current_time
-from celine.tools.text_input import type_text
+from celine.tools.text_input import APPROVED_MODES, write_text
 from celine.tools.window_control import control_window
 from celine.tools.windows_apps import normalize_name, open_application
 
@@ -17,7 +17,7 @@ TOOL_REGISTRY = {
     "get_current_time": get_current_time,
     "open_application": open_application,
     "control_window": control_window,
-    "type_text": type_text,
+    "write_text": write_text,
 }
 
 # Tools that accept a JSON object of arguments. Every other tool must be
@@ -27,13 +27,13 @@ TOOL_REGISTRY = {
 TOOL_ARGUMENTS = {
     "open_application": frozenset({"name"}),
     "control_window": frozenset({"application", "action"}),
-    "type_text": frozenset({"application", "text"}),
+    "write_text": frozenset({"application", "text", "mode"}),
 }
 
 TOOL_ARGUMENT_TYPES = {
     "open_application": {"name": str},
     "control_window": {"application": str, "action": str},
-    "type_text": {"application": str, "text": str},
+    "write_text": {"application": str, "text": str, "mode": str},
 }
 
 # Tool schemas: a JSON description of each tool, sent to Ollama so the
@@ -103,19 +103,25 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "type_text",
+            "name": "write_text",
             "description": (
-                "Append plain text to the editable document of an already-"
-                "running Notepad. Only notepad is supported; this tool does "
-                "not open or save the application."
+                "Write plain text to the editable document of an already-"
+                "running Notepad. Use append for normal writing, or new_line "
+                "to add exactly one line break before the text when the "
+                "document is non-empty. This tool does not open, read, or "
+                "save the application."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "application": {"type": "string"},
                     "text": {"type": "string"},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["append", "new_line"],
+                    },
                 },
-                "required": ["application", "text"],
+                "required": ["application", "text", "mode"],
                 "additionalProperties": False,
             },
         },
@@ -194,11 +200,16 @@ def run_tool_call(tool_call):
             )
 
     if (
-        name == "type_text"
+        name == "write_text"
         and normalize_name(arguments["application"]) != "notepad"
     ):
         return name, _bad_arguments(
-            name, "type_text supports only the notepad application"
+            name, "write_text supports only the notepad application"
+        )
+
+    if name == "write_text" and arguments["mode"] not in APPROVED_MODES:
+        return name, _bad_arguments(
+            name, "mode must be one of: " + ", ".join(APPROVED_MODES)
         )
 
     try:

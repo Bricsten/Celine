@@ -1,9 +1,9 @@
-"""Safe, control-scoped text insertion for an already-running Notepad.
+"""Safe, structured text writing for an already-running Notepad.
 
-The model supplies only a logical application name and plain text. Trusted
-code finds the approved Notepad top-level window, locates its fixed editable
-child control, and appends through messages sent directly to that child HWND.
-No focus-based or global keyboard input is used.
+The model supplies only a logical application name, plain text, and one fixed
+mode. Trusted code finds the approved Notepad top-level window, locates its
+fixed editable child control, and writes through messages sent directly to
+that child HWND. No focus-based or global keyboard input is used.
 """
 
 import ctypes
@@ -18,6 +18,7 @@ from celine.tools.windows_apps import normalize_name
 
 
 MAX_TEXT_LENGTH = 10_000
+APPROVED_MODES = ("append", "new_line")
 
 # Fixed UI Automation identities for the document control. Modern Windows 11
 # Notepad exposes RichEditD2DPT as a Document; classic Notepad exposes Edit.
@@ -30,7 +31,7 @@ EDIT_TARGETS = (
 
 def _debug(message):
     if config.TOOL_LOG:
-        print(f"[tool] type_text {message}")
+        print(f"[tool] write_text {message}")
 
 
 def _uia_window(hwnd):
@@ -69,13 +70,18 @@ def _find_editable_control(window):
     return None
 
 
-def _append_text(control, text):
-    """Append text directly to a verified edit control without global keys."""
+def _write_to_control(control, text, mode):
+    """Append one trusted payload to a verified edit control."""
     window = HwndWrapper(_control_handle(control))
     window.verify_actionable()
     end = window.send_message(win32defines.WM_GETTEXTLENGTH)
+    payload = text
+    if mode == "new_line" and end > 0:
+        payload = "\r\n" + text
     window.send_message(win32defines.EM_SETSEL, end, end)
-    buffer = ctypes.create_unicode_buffer(text, len(text) + 1)
+    # Let ctypes size this in native wchar units so supplementary Unicode
+    # characters still leave room for the required null terminator on Windows.
+    buffer = ctypes.create_unicode_buffer(payload)
     window.send_message(
         win32defines.EM_REPLACESEL,
         True,
@@ -83,10 +89,10 @@ def _append_text(control, text):
     )
 
 
-def type_text(application, text):
-    """Append plain text to the editable control of a running Notepad."""
+def write_text(application, text, mode):
+    """Write text using one approved mode in a running Notepad."""
     chars = len(text) if isinstance(text, str) else "invalid"
-    _debug(f"requested application={application} chars={chars}")
+    _debug(f"requested application={application} mode={mode} chars={chars}")
 
     canonical = normalize_name(application)
     if canonical != "notepad":
@@ -107,6 +113,13 @@ def type_text(application, text):
             f"Text exceeds the {MAX_TEXT_LENGTH:,}-character limit. "
             "No text was entered."
         )
+    if not isinstance(mode, str) or mode not in APPROVED_MODES:
+        _debug("failed application=notepad reason=invalid_mode")
+        allowed = ", ".join(APPROVED_MODES)
+        return (
+            f"Text mode is not allowed: {mode!r}. "
+            f"Approved modes: {allowed}. No text was entered."
+        )
 
     try:
         hwnd = _find_window("notepad")
@@ -122,7 +135,7 @@ def type_text(application, text):
                 "No text was entered."
             )
 
-        _append_text(control, text)
+        _write_to_control(control, text, mode)
     except Exception:
         _debug("failed application=notepad reason=automation_error")
         return (
@@ -130,5 +143,12 @@ def type_text(application, text):
             "No text was entered."
         )
 
-    _debug(f"success application=notepad chars={len(text)}")
-    return f"Text entered successfully in notepad ({len(text)} characters)."
+    _debug(
+        f"success application=notepad mode={mode} chars={len(text)}"
+    )
+    if mode == "new_line":
+        return (
+            "Text added on a new line successfully in notepad "
+            f"({len(text)} characters)."
+        )
+    return f"Text appended successfully in notepad ({len(text)} characters)."

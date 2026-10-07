@@ -8,16 +8,17 @@ a small allowlist of Windows applications, and Notepad-only text entry.
 
 ## Current milestone
 
-**Milestone 4.3A — safe Notepad text entry.**
-Celine can append plain Unicode text to the editable document of an already-
-running Notepad. Notepad is located through fixed process and window rules,
-then its editable child is verified through fixed UI Automation control rules.
-No global keyboard input, clipboard, arbitrary handle, PID, title, or regular
-expression comes from model input.
+**Milestone 4.3B — structured Notepad text operations.**
+Celine can append plain Unicode text to an already-running Notepad using one
+of two fixed modes: `append` or `new_line`. Notepad is located through fixed
+process and window rules, then its editable child is verified through fixed UI
+Automation control rules. No global keyboard input, clipboard, arbitrary
+handle, PID, title, or regular expression comes from model input.
 
-Example supported request: `Open Notepad and write Hello from Celine.` The
-agent can call `open_application` and then `type_text` through the normal tool
-loop; `type_text` itself never opens Notepad.
+Supported examples: `Write 'Hello' in Notepad.` and `Add 'Second line' on a
+new line in Notepad.` The agent can call `open_application` and then
+`write_text` through the normal tool loop; `write_text` itself never opens,
+reads, or saves Notepad.
 
 ## Prerequisites
 
@@ -122,15 +123,16 @@ pytest.ini             # test config (src/ on path, tests/ folder)
 - In-memory conversation history (per session)
 - Native tool calling with a fixed whitelist registry
 - Four tools: `get_current_time()` (no arguments),
-  `open_application(name)`, and
-  `control_window(application, action)`, and
-  `type_text(application, text)`
+  `open_application(name)`, `control_window(application, action)`, and
+  `write_text(application, text, mode)`
 - The application allowlist is `notepad`, `calculator`, `word`, and
   `file_explorer`
 - Approved window actions are `minimize`, `restore`, `focus`, and `close`;
   close posts a normal window-close request rather than killing a process
-- Text entry is restricted to Notepad, appends at the end of existing content,
-  accepts ordinary Unicode, and is limited to 10,000 characters per call
+- Text entry is restricted to Notepad and accepts ordinary Unicode. `append`
+  adds text directly at the end; `new_line` first adds one `\r\n` unless the
+  document is empty. The 10,000-character limit applies to user-supplied text,
+  excluding the trusted line-break prefix.
 - App names are trimmed/lowercased and alias-mapped; anything outside
   the allowlist (arbitrary strings, paths, commands) is rejected
 - Unknown tools rejected safely; tool arguments validated
@@ -144,6 +146,7 @@ pytest.ini             # test config (src/ on path, tests/ folder)
 - No typing into Word or other applications, clicking, global keyboard/mouse
   automation, keyboard shortcuts, screenshots, or arbitrary window control
 - No document saving, file opening, formatting, or unrestricted clipboard use
+- No document reading, replacement, deletion, or Word typing
 - No arbitrary titles, regular expressions, process IDs, or window handles
 - No process termination or force-killing
 - No file access, shell/PowerShell execution, or web search

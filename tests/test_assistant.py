@@ -59,9 +59,9 @@ def test_tool_result_is_returned_into_the_conversation():
     assert "get_current_time" in schema_names
 
 
-def test_prompt_limits_type_text_success_to_confirmed_action():
+def test_prompt_limits_write_text_success_to_confirmed_action():
     prompt = prompts.SYSTEM_PROMPT
-    assert "requested text was inserted or appended" in prompt
+    assert "requested text was appended, optionally after a new line" in prompt
     assert "does not reveal or confirm the complete document contents" in prompt
     assert "unless a tool has actually read and returned it" in prompt
     assert "information you merely inferred" in prompt

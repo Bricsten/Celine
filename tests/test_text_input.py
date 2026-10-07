@@ -84,22 +84,37 @@ def install_notepad(monkeypatch, *, controls=None, wrapper=None):
 def test_valid_notepad_text_is_appended_to_verified_child(monkeypatch):
     wrapper, seen_handles = install_notepad(monkeypatch)
 
-    result = text_input.type_text("notepad", "Hello, 世界")
+    result = text_input.write_text("notepad", "Hello, 世界 😀", "append")
 
-    assert "entered successfully" in result
+    assert "appended successfully" in result
     assert seen_handles == [222]
     assert wrapper.calls == [
         ("verify_actionable",),
         ("length",),
         ("select", 8, 8),
-        ("replace", True, "Hello, 世界"),
+        ("replace", True, "Hello, 世界 😀"),
     ]
+
+
+def test_new_line_adds_crlf_before_text(monkeypatch):
+    wrapper, _ = install_notepad(monkeypatch)
+    result = text_input.write_text("notepad", "Second line", "new_line")
+    assert "new line successfully" in result
+    assert ("replace", True, "\r\nSecond line") in wrapper.calls
+
+
+def test_new_line_on_empty_document_has_no_leading_crlf(monkeypatch):
+    wrapper = FakeHwndWrapper(222, existing_length=0)
+    install_notepad(monkeypatch, wrapper=wrapper)
+    result = text_input.write_text("notepad", "Hello", "new_line")
+    assert "new line successfully" in result
+    assert ("replace", True, "Hello") in wrapper.calls
 
 
 def test_notepad_name_is_normalized(monkeypatch):
     wrapper, _ = install_notepad(monkeypatch)
-    result = text_input.type_text("  NOTEPAD  ", "hello")
-    assert "entered successfully" in result
+    result = text_input.write_text("  NOTEPAD  ", "hello", "append")
+    assert "appended successfully" in result
     assert ("replace", True, "hello") in wrapper.calls
 
 
@@ -110,7 +125,7 @@ def test_other_applications_are_rejected(monkeypatch, application):
         "_find_window",
         lambda app: pytest.fail("window discovery must not run"),
     )
-    result = text_input.type_text(application, "hello")
+    result = text_input.write_text(application, "hello", "append")
     assert "only allowed for notepad" in result
     assert "No text was entered" in result
 
@@ -121,7 +136,9 @@ def test_executable_path_is_rejected(monkeypatch):
         "_find_window",
         lambda app: pytest.fail("window discovery must not run"),
     )
-    result = text_input.type_text(r"C:\Windows\notepad.exe", "hello")
+    result = text_input.write_text(
+        r"C:\Windows\notepad.exe", "hello", "append"
+    )
     assert "only allowed for notepad" in result
 
 
@@ -131,7 +148,7 @@ def test_non_string_text_is_rejected_before_discovery(monkeypatch):
         "_find_window",
         lambda app: pytest.fail("window discovery must not run"),
     )
-    result = text_input.type_text("notepad", None)
+    result = text_input.write_text("notepad", None, "append")
     assert "Text must be a string" in result
 
 
@@ -141,7 +158,7 @@ def test_empty_text_is_rejected_before_discovery(monkeypatch):
         "_find_window",
         lambda app: pytest.fail("window discovery must not run"),
     )
-    result = text_input.type_text("notepad", "")
+    result = text_input.write_text("notepad", "", "append")
     assert "Text is empty" in result
 
 
@@ -151,11 +168,30 @@ def test_over_limit_text_is_rejected_before_discovery(monkeypatch):
         "_find_window",
         lambda app: pytest.fail("window discovery must not run"),
     )
-    result = text_input.type_text(
+    result = text_input.write_text(
         "notepad",
         "x" * (text_input.MAX_TEXT_LENGTH + 1),
+        "append",
     )
     assert "10,000-character limit" in result
+
+
+def test_exact_text_limit_is_accepted(monkeypatch):
+    wrapper, _ = install_notepad(monkeypatch)
+    text = "界" * text_input.MAX_TEXT_LENGTH
+    result = text_input.write_text("notepad", text, "new_line")
+    assert "new line successfully" in result
+    assert ("replace", True, "\r\n" + text) in wrapper.calls
+
+
+def test_unsupported_mode_is_rejected_before_discovery(monkeypatch):
+    monkeypatch.setattr(
+        text_input,
+        "_find_window",
+        lambda app: pytest.fail("window discovery must not run"),
+    )
+    result = text_input.write_text("notepad", "hello", "replace")
+    assert "Text mode is not allowed" in result
 
 
 def test_notepad_not_running_is_handled(monkeypatch):
@@ -165,7 +201,7 @@ def test_notepad_not_running_is_handled(monkeypatch):
         "_uia_window",
         lambda hwnd: pytest.fail("UIA discovery must not run"),
     )
-    result = text_input.type_text("notepad", "hello")
+    result = text_input.write_text("notepad", "hello", "append")
     assert result == "Notepad is not currently open. No text was entered."
 
 
@@ -176,7 +212,7 @@ def test_editable_control_not_found_is_handled(monkeypatch):
         "_uia_window",
         lambda hwnd: FakeUiaWindow(),
     )
-    result = text_input.type_text("notepad", "hello")
+    result = text_input.write_text("notepad", "hello", "append")
     assert "editable control could not be identified" in result
 
 
@@ -187,15 +223,15 @@ def test_classic_notepad_edit_control_is_supported(monkeypatch):
     monkeypatch.setattr(text_input, "_find_window", lambda app: 111)
     monkeypatch.setattr(text_input, "_uia_window", lambda hwnd: top)
     monkeypatch.setattr(text_input, "HwndWrapper", lambda handle: wrapper)
-    result = text_input.type_text("notepad", "more")
-    assert "entered successfully" in result
+    result = text_input.write_text("notepad", "more", "append")
+    assert "appended successfully" in result
     assert ("select", 4, 4) in wrapper.calls
 
 
 def test_automation_exception_is_handled(monkeypatch):
     wrapper = FakeHwndWrapper(222, error=RuntimeError("denied"))
     install_notepad(monkeypatch, wrapper=wrapper)
-    result = text_input.type_text("notepad", "hello")
+    result = text_input.write_text("notepad", "hello", "append")
     assert "automation failed" in result
     assert "No text was entered" in result
 
@@ -203,7 +239,7 @@ def test_automation_exception_is_handled(monkeypatch):
 def test_multiple_matching_controls_are_rejected(monkeypatch):
     controls = [FakeControl(handle=222), FakeControl(handle=333)]
     install_notepad(monkeypatch, controls=controls)
-    result = text_input.type_text("notepad", "hello")
+    result = text_input.write_text("notepad", "hello", "append")
     assert "editable control could not be identified" in result
 
 
@@ -216,15 +252,21 @@ def test_text_path_has_no_global_keyboard_api():
         "SendInput",
         "keyboard.send",
         "hotkey",
+        "clipboard",
     ):
         assert prohibited not in source
 
 
 def test_registry_rejects_missing_application(monkeypatch):
     calls = []
-    monkeypatch.setitem(registry.TOOL_REGISTRY, "type_text", lambda **kw: calls.append(kw))
+    monkeypatch.setitem(
+        registry.TOOL_REGISTRY, "write_text", lambda **kw: calls.append(kw)
+    )
     _, result = registry.run_tool_call({
-        "function": {"name": "type_text", "arguments": {"text": "hello"}}
+        "function": {
+            "name": "write_text",
+            "arguments": {"text": "hello", "mode": "append"},
+        }
     })
     assert "missing required arguments: application" in result
     assert calls == []
@@ -232,26 +274,46 @@ def test_registry_rejects_missing_application(monkeypatch):
 
 def test_registry_rejects_missing_text(monkeypatch):
     calls = []
-    monkeypatch.setitem(registry.TOOL_REGISTRY, "type_text", lambda **kw: calls.append(kw))
+    monkeypatch.setitem(
+        registry.TOOL_REGISTRY, "write_text", lambda **kw: calls.append(kw)
+    )
     _, result = registry.run_tool_call({
         "function": {
-            "name": "type_text",
-            "arguments": {"application": "notepad"},
+            "name": "write_text",
+            "arguments": {"application": "notepad", "mode": "append"},
         }
     })
     assert "missing required arguments: text" in result
     assert calls == []
 
 
-def test_registry_rejects_extra_argument(monkeypatch):
+def test_registry_rejects_missing_mode(monkeypatch):
     calls = []
-    monkeypatch.setitem(registry.TOOL_REGISTRY, "type_text", lambda **kw: calls.append(kw))
+    monkeypatch.setitem(
+        registry.TOOL_REGISTRY, "write_text", lambda **kw: calls.append(kw)
+    )
     _, result = registry.run_tool_call({
         "function": {
-            "name": "type_text",
+            "name": "write_text",
+            "arguments": {"application": "notepad", "text": "hello"},
+        }
+    })
+    assert "missing required arguments: mode" in result
+    assert calls == []
+
+
+def test_registry_rejects_extra_argument(monkeypatch):
+    calls = []
+    monkeypatch.setitem(
+        registry.TOOL_REGISTRY, "write_text", lambda **kw: calls.append(kw)
+    )
+    _, result = registry.run_tool_call({
+        "function": {
+            "name": "write_text",
             "arguments": {
                 "application": "notepad",
                 "text": "hello",
+                "mode": "append",
                 "title": ".*",
             },
         }
@@ -262,11 +324,17 @@ def test_registry_rejects_extra_argument(monkeypatch):
 
 def test_registry_rejects_non_string_text(monkeypatch):
     calls = []
-    monkeypatch.setitem(registry.TOOL_REGISTRY, "type_text", lambda **kw: calls.append(kw))
+    monkeypatch.setitem(
+        registry.TOOL_REGISTRY, "write_text", lambda **kw: calls.append(kw)
+    )
     _, result = registry.run_tool_call({
         "function": {
-            "name": "type_text",
-            "arguments": {"application": "notepad", "text": 123},
+            "name": "write_text",
+            "arguments": {
+                "application": "notepad",
+                "text": 123,
+                "mode": "append",
+            },
         }
     })
     assert "argument 'text' must be a string" in result
@@ -275,43 +343,95 @@ def test_registry_rejects_non_string_text(monkeypatch):
 
 def test_registry_rejects_non_string_application(monkeypatch):
     calls = []
-    monkeypatch.setitem(registry.TOOL_REGISTRY, "type_text", lambda **kw: calls.append(kw))
+    monkeypatch.setitem(
+        registry.TOOL_REGISTRY, "write_text", lambda **kw: calls.append(kw)
+    )
     _, result = registry.run_tool_call({
         "function": {
-            "name": "type_text",
-            "arguments": {"application": 123, "text": "hello"},
+            "name": "write_text",
+            "arguments": {
+                "application": 123,
+                "text": "hello",
+                "mode": "append",
+            },
         }
     })
     assert "argument 'application' must be a string" in result
     assert calls == []
 
 
-def test_registry_rejects_unsupported_application(monkeypatch):
+def test_registry_rejects_non_string_mode(monkeypatch):
     calls = []
-    monkeypatch.setitem(registry.TOOL_REGISTRY, "type_text", lambda **kw: calls.append(kw))
+    monkeypatch.setitem(
+        registry.TOOL_REGISTRY, "write_text", lambda **kw: calls.append(kw)
+    )
     _, result = registry.run_tool_call({
         "function": {
-            "name": "type_text",
-            "arguments": {"application": "word", "text": "hello"},
+            "name": "write_text",
+            "arguments": {
+                "application": "notepad",
+                "text": "hello",
+                "mode": 123,
+            },
+        }
+    })
+    assert "argument 'mode' must be a string" in result
+    assert calls == []
+
+
+def test_registry_rejects_unsupported_application(monkeypatch):
+    calls = []
+    monkeypatch.setitem(
+        registry.TOOL_REGISTRY, "write_text", lambda **kw: calls.append(kw)
+    )
+    _, result = registry.run_tool_call({
+        "function": {
+            "name": "write_text",
+            "arguments": {
+                "application": "word",
+                "text": "hello",
+                "mode": "append",
+            },
         }
     })
     assert "supports only the notepad application" in result
     assert calls == []
 
 
-def test_type_text_schema_is_exact():
+def test_registry_rejects_unsupported_mode(monkeypatch):
+    calls = []
+    monkeypatch.setitem(
+        registry.TOOL_REGISTRY, "write_text", lambda **kw: calls.append(kw)
+    )
+    _, result = registry.run_tool_call({
+        "function": {
+            "name": "write_text",
+            "arguments": {
+                "application": "notepad",
+                "text": "hello",
+                "mode": "replace",
+            },
+        }
+    })
+    assert "mode must be one of: append, new_line" in result
+    assert calls == []
+
+
+def test_write_text_schema_is_exact():
     schema = next(
         item["function"]
         for item in registry.TOOL_SCHEMAS
-        if item["function"]["name"] == "type_text"
+        if item["function"]["name"] == "write_text"
     )
     parameters = schema["parameters"]
-    assert set(parameters["properties"]) == {"application", "text"}
-    assert parameters["required"] == ["application", "text"]
+    assert set(parameters["properties"]) == {"application", "text", "mode"}
+    assert parameters["properties"]["mode"]["enum"] == ["append", "new_line"]
+    assert parameters["required"] == ["application", "text", "mode"]
     assert parameters["additionalProperties"] is False
+    assert "type_text" not in registry.TOOL_REGISTRY
 
 
-def test_agent_supports_open_then_type_across_tool_rounds(monkeypatch):
+def test_agent_supports_open_then_write_across_tool_rounds(monkeypatch):
     calls = []
     monkeypatch.setitem(
         registry.TOOL_REGISTRY,
@@ -320,8 +440,10 @@ def test_agent_supports_open_then_type_across_tool_rounds(monkeypatch):
     )
     monkeypatch.setitem(
         registry.TOOL_REGISTRY,
-        "type_text",
-        lambda application, text: calls.append(("type_text", application, text))
+        "write_text",
+        lambda application, text, mode: calls.append(
+            ("write_text", application, text, mode)
+        )
         or "typed",
     )
     responses = iter([
@@ -340,10 +462,11 @@ def test_agent_supports_open_then_type_across_tool_rounds(monkeypatch):
             "content": "",
             "tool_calls": [{
                 "function": {
-                    "name": "type_text",
+                    "name": "write_text",
                     "arguments": {
                         "application": "notepad",
                         "text": "Hello from Celine.",
+                        "mode": "append",
                     },
                 }
             }],
@@ -357,7 +480,7 @@ def test_agent_supports_open_then_type_across_tool_rounds(monkeypatch):
     assert reply == "Done."
     assert calls == [
         ("open_application", "notepad"),
-        ("type_text", "notepad", "Hello from Celine."),
+        ("write_text", "notepad", "Hello from Celine.", "append"),
     ]
 
 
@@ -365,8 +488,8 @@ def test_tool_log_contains_metadata_not_text(monkeypatch, capsys):
     install_notepad(monkeypatch)
     monkeypatch.setattr(config, "TOOL_LOG", True)
     secret = "do not log this"
-    text_input.type_text("notepad", secret)
+    text_input.write_text("notepad", secret, "new_line")
     output = capsys.readouterr().out
-    assert "requested application=notepad chars=15" in output
-    assert "success application=notepad chars=15" in output
+    assert "requested application=notepad mode=new_line chars=15" in output
+    assert "success application=notepad mode=new_line chars=15" in output
     assert secret not in output
