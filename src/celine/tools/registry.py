@@ -10,6 +10,8 @@ from celine.tools.system_time import get_current_time
 from celine.tools.text_input import APPROVED_MODES, write_text
 from celine.tools.window_control import control_window
 from celine.tools.windows_apps import normalize_name, open_application
+from celine.tools.word import create_word_document, write_word_text
+from celine.tools.word.adapter import APPROVED_WORD_MODES
 
 # Tool registry: the ONLY functions Celine is ever allowed to run.
 # The model asks for a tool by name; nothing not listed here can execute.
@@ -18,6 +20,8 @@ TOOL_REGISTRY = {
     "open_application": open_application,
     "control_window": control_window,
     "write_text": write_text,
+    "write_word_text": write_word_text,
+    "create_word_document": create_word_document,
 }
 
 # Tools that accept a JSON object of arguments. Every other tool must be
@@ -28,12 +32,14 @@ TOOL_ARGUMENTS = {
     "open_application": frozenset({"name"}),
     "control_window": frozenset({"application", "action"}),
     "write_text": frozenset({"application", "text", "mode"}),
+    "write_word_text": frozenset({"text", "mode"}),
 }
 
 TOOL_ARGUMENT_TYPES = {
     "open_application": {"name": str},
     "control_window": {"application": str, "action": str},
     "write_text": {"application": str, "text": str, "mode": str},
+    "write_word_text": {"text": str, "mode": str},
 }
 
 # Tool schemas: a JSON description of each tool, sent to Ollama so the
@@ -59,7 +65,10 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "open_application",
             "description": (
-                "Open one approved Windows application by name. "
+                "Use only to launch an approved Windows application. Do not "
+                "use this tool if the user only asked to act inside an "
+                "application that may already be running. "
+                "Launching Word does not create a Word document. "
                 "Approved names: notepad, calculator, word, file_explorer. "
                 "Takes a single string argument: name."
             ),
@@ -83,7 +92,9 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "control_window",
             "description": (
-                "Minimize, restore, focus, or gracefully close the visible "
+                "Use for window actions only; do not launch an application "
+                "first unless the user explicitly requested it. Minimize, "
+                "restore, focus, or gracefully close the visible "
                 "top-level window of one approved Windows application. "
                 "Approved applications: notepad, calculator, word, "
                 "file_explorer. Approved actions: minimize, restore, focus, "
@@ -105,8 +116,10 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "write_text",
             "description": (
-                "Write plain text to the editable document of an already-"
-                "running Notepad. Use append for normal writing, or new_line "
+                "Use directly when the user asks to write in an already-"
+                "running Notepad; do not launch Notepad first unless the "
+                "user explicitly requested it. Use append for normal "
+                "writing, or new_line "
                 "to add exactly one line break before the text when the "
                 "document is non-empty. This tool does not open, read, or "
                 "save the application."
@@ -122,6 +135,51 @@ TOOL_SCHEMAS = [
                     },
                 },
                 "required": ["application", "text", "mode"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_word_text",
+            "description": (
+                "Use directly when the user asks to write or add text in an "
+                "already-running Microsoft Word document. It requires "
+                "exactly one already-open editable document and refuses if "
+                "no document is open. This tool does not launch Word. Use "
+                "append to add "
+                "text at the document end, or new_paragraph to add one new "
+                "paragraph. This tool does not open, create, read, format, "
+                "or save documents."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["append", "new_paragraph"],
+                    },
+                },
+                "required": ["text", "mode"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_word_document",
+            "description": (
+                "Create one blank unsaved document in an already-running "
+                "safe Microsoft Word instance when no document is currently "
+                "open. Does not launch Word or save. Takes no arguments."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
                 "additionalProperties": False,
             },
         },
@@ -210,6 +268,14 @@ def run_tool_call(tool_call):
     if name == "write_text" and arguments["mode"] not in APPROVED_MODES:
         return name, _bad_arguments(
             name, "mode must be one of: " + ", ".join(APPROVED_MODES)
+        )
+
+    if (
+        name == "write_word_text"
+        and arguments["mode"] not in APPROVED_WORD_MODES
+    ):
+        return name, _bad_arguments(
+            name, "mode must be one of: " + ", ".join(APPROVED_WORD_MODES)
         )
 
     try:
