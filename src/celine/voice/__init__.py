@@ -5,6 +5,18 @@ speech recognition, wake word, or background listening anywhere in this
 package. Speech is off by default (see ``config.VOICE_ENABLED``).
 """
 
-from celine.voice.tts import SpeakResult, Speaker, VoiceError, select_voice
+from celine.voice.tts import (
+    SpeakResult,
+    Speaker,
+    VoiceError,
+    build_engine,
+    select_voice,
+)
 
-__all__ = ["Speaker", "SpeakResult", "VoiceError", "select_voice"]
+__all__ = [
+    "Speaker",
+    "SpeakResult",
+    "VoiceError",
+    "build_engine",
+    "select_voice",
+]

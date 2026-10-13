@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from celine.core import config
 from celine.voice.engines import SpeechEngine, VoiceError, VoiceInfo
 
-__all__ = ["Speaker", "SpeakResult", "VoiceError", "select_voice"]
+__all__ = ["Speaker", "SpeakResult", "VoiceError", "build_engine", "select_voice"]
 
 
 @dataclass(frozen=True)
@@ -95,6 +95,10 @@ def select_voice(
 
 def build_engine(name):
     """Construct one known engine by name. Unknown names fail safely."""
+    if name == "piper":
+        from celine.voice.engines.piper_engine import PiperEngine
+
+        return PiperEngine()
     if name == "windows_sapi":
         from celine.voice.engines.windows_sapi import WindowsSapiEngine
 
@@ -105,12 +109,35 @@ def build_engine(name):
 class Speaker:
     """Owns one engine and speaks final assistant replies on request."""
 
-    def __init__(self, engine=None, *, enabled=None, engine_name=None):
+    def __init__(
+        self,
+        engine=None,
+        *,
+        enabled=None,
+        engine_name=None,
+        allow_fallback=None,
+        fallback_engine=None,
+    ):
         requested = config.VOICE_ENABLED if enabled is None else bool(enabled)
         self.requested = requested
         self.enabled = requested
         self._engine = engine
         self._engine_name = engine_name or config.VOICE_ENGINE
+        # An explicitly injected engine is never silently replaced, which keeps
+        # tests and callers in full control of which engine is used.
+        self._fallback_engine = (
+            config.VOICE_FALLBACK_ENGINE
+            if fallback_engine is None
+            else fallback_engine
+        )
+        self._allow_fallback = (
+            (engine is None)
+            and (
+                config.VOICE_ALLOW_FALLBACK
+                if allow_fallback is None
+                else bool(allow_fallback)
+            )
+        )
         self._prepared = False
         self._voice_id = None
         self._note = None
@@ -123,18 +150,7 @@ class Speaker:
         if self._prepared or self._closed or not self.enabled:
             return
         self._prepared = True
-        try:
-            if self._engine is None:
-                self._engine = build_engine(self._engine_name)
-        except Exception as exc:  # noqa: BLE001 - degrade to silence
-            self._disable(f"engine_init_failed:{exc.__class__.__name__}")
-            return
-        try:
-            if self._engine is None or not self._engine.available():
-                self._disable("engine_unavailable")
-                return
-        except Exception as exc:  # noqa: BLE001 - degrade to silence
-            self._disable(f"engine_check_failed:{exc.__class__.__name__}")
+        if not self._ensure_engine():
             return
         try:
             voices = self._engine.list_voices()
@@ -144,6 +160,41 @@ class Speaker:
             self._voice_id, self._note = select_voice(voices)
         except Exception:  # noqa: BLE001 - never block speaking on metadata
             self._voice_id, self._note = None, "voice selection failed"
+
+    def _ensure_engine(self):
+        """Create the primary engine, or an allowed fallback. Never raises."""
+        if self._engine is None:
+            try:
+                self._engine = build_engine(self._engine_name)
+            except Exception as exc:  # noqa: BLE001 - degrade to silence
+                self._disable(f"engine_init_failed:{exc.__class__.__name__}")
+                return False
+        try:
+            if self._engine is not None and self._engine.available():
+                return True
+        except Exception as exc:  # noqa: BLE001 - degrade to silence
+            self._disable(f"engine_check_failed:{exc.__class__.__name__}")
+            return False
+        if self._allow_fallback:
+            fallback = self._build_fallback()
+            if fallback is not None:
+                self._engine = fallback
+                self._engine_name = self._fallback_engine
+                return True
+        self._disable("engine_unavailable")
+        return False
+
+    def _build_fallback(self):
+        name = self._fallback_engine
+        if not name or name == self._engine_name:
+            return None
+        try:
+            engine = build_engine(name)
+            if engine is not None and engine.available():
+                return engine
+        except Exception:  # noqa: BLE001 - fallback is best-effort
+            return None
+        return None
 
     def speak(self, text):
         """Speak final text. Returns a result; never raises."""

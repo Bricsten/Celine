@@ -1,0 +1,7 @@
+# Optional neural voice dependencies (Milestone 5.1B).
+# Not required for the core assistant. Install with:
+#   .venv\Scripts\python.exe -m pip install -r requirements-voice.txt
+# Then download the British female voice model:
+#   .venv\Scripts\python.exe -m piper.download_voices en_GB-cori-medium --download-dir models/piper
+# piper-tts pulls onnxruntime and pathvalidate automatically.
+piper-tts

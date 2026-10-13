@@ -10,19 +10,20 @@ DOCX saving.
 
 ## Current milestone
 
-**Milestone 5.1 — offline voice output (text-to-speech only).**
-Celine can now speak her final replies aloud through the Windows SAPI voice
-using the already-installed `pywin32` dependency. Speech is **off by default**
-and stays entirely local. Only the final assistant reply is spoken: never
-tool arguments, raw JSON, internal reasoning, or diagnostics. There is no
-microphone input, speech recognition, wake word, or background listening in
-this milestone.
+**Milestone 5.1B — natural British female voice.**
+Celine now speaks her final replies with an offline neural British female voice
+(**Piper**, `en_GB-cori-medium`) instead of the robotic Microsoft Zira SAPI
+voice. Speech stays entirely local, only the final user-facing reply is spoken,
+and the existing Windows SAPI engine remains as an explicit fallback. There is
+no microphone input, speech recognition, wake word, or background listening.
+The neural engine is optional; if it is unavailable Celine falls back honestly
+and never describes an American voice as British.
 
-A British (`en-GB`) female voice is **not installed on this machine** — only
-Microsoft David (en-US, male) and Microsoft Zira (en-US, female) are
-available. Celine therefore falls back to an honest choice (currently Zira)
-and prints a one-line `[voice]` note saying the British voice was unavailable,
-rather than misrepresenting the voice.
+**Milestone 5.1 — offline voice output (text-to-speech only).**
+Celine can speak her final replies aloud through the Windows SAPI voice using
+the already-installed `pywin32` dependency. Speech stays local and only the
+final assistant reply is spoken: never tool arguments, raw JSON, internal
+reasoning, or diagnostics.
 
 **Milestone 4.3H — local performance and reliability optimisation.**
 Celine's requests bound output generation with a smaller `num_predict` cap and
@@ -132,44 +133,80 @@ reasoning).
 
 ## Voice output
 
-Voice output uses the offline Windows SAPI voice through the existing
-`pywin32` dependency. No extra packages or model downloads are required.
-Speech is disabled by default.
+Celine speaks her final reply with an offline neural British female voice
+(**Piper**, `en_GB-cori-medium`) and plays it through the Windows standard
+library. Everything runs locally; there is no network access while speaking.
+The built-in Windows SAPI voice remains as an explicit fallback.
 
-Enable it in `src/celine/core/config.py`:
+The engine is chosen in `src/celine/core/config.py`:
 
 ```python
 VOICE_ENABLED = True
-VOICE_ENGINE = "windows_sapi"      # only this engine exists in 5.1
-VOICE_RATE = 0                     # SAPI: -10 (slow) .. 10 (fast)
+VOICE_ENGINE = "piper"             # "piper" (neural) or "windows_sapi"
+VOICE_RATE = 0                     # -10 (slow) .. 10 (fast), 0 normal
 VOICE_VOLUME = 100                 # 0 .. 100
 VOICE_PREFERRED_LOCALE = "en-GB"   # desired British female voice
-VOICE_FALLBACK_LOCALE = "en-US"    # used when no en-GB voice is installed
+VOICE_FALLBACK_LOCALE = "en-US"
 VOICE_PREFER_FEMALE = True
+VOICE_PIPER_MODEL = "models/piper/en_GB-cori-medium.onnx"  # trusted path
+VOICE_PIPER_VOICE = "en_GB-cori-medium"
+VOICE_PIPER_GENDER = "Female"
+VOICE_ALLOW_FALLBACK = True        # use SAPI if Piper is unavailable
+VOICE_FALLBACK_ENGINE = "windows_sapi"
 ```
 
-Then run Celine normally:
+The model path is trusted local configuration and is never supplied by the
+model. Relative paths resolve against the project root, so run Celine from the
+project root:
 
 ```powershell
 python run.py
 ```
 
 Celine prints each reply and speaks it. The first spoken reply prints one
-`[voice]` line describing the voice actually used, for example:
+`[voice]` line describing the voice actually used:
+
+```
+[voice] using en-GB Female voice 'en_GB-cori-medium'
+```
+
+If Piper cannot be used (dependency or model missing), Celine falls back to the
+installed SAPI voice and says so honestly:
 
 ```
 [voice] en-GB voice unavailable; using fallback en-US Female voice 'Microsoft Zira Desktop'
 ```
 
-To add a real British voice on Windows 11, open **Settings → Time & language
-→ Speech → Voices → Add voices**, install an English (United Kingdom) voice,
-then restart Celine. Celine will pick it up automatically and the fallback
-note will disappear. The voice is chosen by locale and gender; the preferred
-voice is never misrepresented as British if the British one is absent.
+Set `VOICE_ALLOW_FALLBACK = False` to stay silent instead of falling back. An
+American fallback voice is never described as British.
 
-Playback is synchronous: Celine finishes speaking before the next prompt
-appears. On this machine the fixed startup cost is a few milliseconds after
-the first use, and a short sentence plays in roughly five seconds.
+### Installing the neural voice
+
+The neural engine is optional and not part of the core `requirements.txt`.
+Install it once with:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-voice.txt
+.venv\Scripts\python.exe -m piper.download_voices en_GB-cori-medium --download-dir models/piper
+```
+
+This adds `piper-tts` (~34 MB) and `onnxruntime` (~15 MB + numpy), and downloads
+the `en_GB-cori-medium` voice (~64 MB) from the official `rhasspy/piper-voices`
+collection. The model directory is git-ignored.
+
+### Voice performance on this laptop (CPU-only)
+
+- Model load: a one-time ~6 seconds on the first spoken reply; the model then
+  stays resident and is not reloaded per reply.
+- Synthesis: about 265 characters/second (19 chars in 0.13 s, 112 chars in
+  0.42 s, 353 chars in 1.30 s) — roughly 16x faster than real time.
+- Playback: synchronous (Celine finishes speaking before the next prompt),
+  ~2 s for a short sentence.
+- Memory: about +90 MB while the model is resident, released on shutdown.
+
+To add a genuine British SAPI voice as well, open **Settings → Time & language
+→ Speech → Voices → Add voices** and install an English (United Kingdom)
+voice; the SAPI fallback will then use it automatically.
 
 For read-only Word integration diagnostics, run:
 
@@ -214,6 +251,7 @@ src/celine/
     tts.py             # engine/voice selection + safe speak orchestration
     engines/
       __init__.py      # VoiceInfo + SpeechEngine protocol (shared boundary)
+      piper_engine.py  # offline neural Piper engine (ONNX + winsound)
       windows_sapi.py  # offline Windows SAPI engine (pywin32/COM)
   tools/
     system_time.py     # get_current_time implementation
@@ -239,8 +277,11 @@ tests/
   test_word_formatting.py
   test_agent_tool_selection.py
   test_voice.py
+  test_piper_engine.py
 run.py                 # launcher: puts src/ on the path, starts main
 pytest.ini             # test config (src/ on path, tests/ folder)
+requirements.txt       # core dependencies
+requirements-voice.txt # optional neural voice dependencies (Piper)
 ```
 
 ### Execution flow
@@ -300,8 +341,9 @@ pytest.ini             # test config (src/ on path, tests/ folder)
   the allowlist (arbitrary strings, paths, commands) is rejected
 - Unknown tools rejected safely; tool arguments validated
 - `MAX_TOOL_ROUNDS` prevents infinite tool loops
-- Optional offline voice output: Celine can speak her final reply through the
-  Windows SAPI voice (off by default). Only the final user-facing reply is
+- Optional offline voice output: Celine speaks her final reply with a neural
+  British female voice (Piper, `en_GB-cori-medium`), falling back to the Windows
+  SAPI voice when Piper is unavailable. Only the final user-facing reply is
   spoken; there is no microphone, speech recognition, wake word, or background
   listening.
 - Automated tests that need no running Ollama server (`pytest`)
@@ -325,9 +367,10 @@ pytest.ini             # test config (src/ on path, tests/ folder)
 - No process termination or force-killing
 - No other file access, shell/PowerShell execution, or web search
 - Voice is text-to-speech output only: no speech-to-text, microphone input,
-  wake word, or background listening. No British (`en-GB`) voice is installed
-  on this machine, so Celine uses an honest en-US female fallback until one is
-  added in Windows Settings.
+  wake word, or background listening. The neural Piper voice requires a
+  one-time optional dependency and model download (see "Voice output"). If
+  Piper is unavailable, Celine may fall back to the installed en-US SAPI voice
+  and always says so honestly.
 - No persistent memory or database
 - Chat history is lost when the program exits
 - Privacy: the current chat runs locally through Ollama, but Celine

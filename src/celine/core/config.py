@@ -30,15 +30,29 @@ PERF_LOG = False
 TOOL_LOG = False
 
 # --- Voice output (offline text-to-speech only) --------------------------
-# Speech is optional and off by default. This milestone adds spoken replies
-# only: no microphone, speech recognition, wake word, or background listening.
-# SAPI rate is an integer from -10 (slowest) to 10 (fastest); 0 is normal.
-VOICE_ENABLED = False
-VOICE_ENGINE = "windows_sapi"
+# Speech is optional. This milestone adds spoken replies only: no microphone,
+# speech recognition, wake word, or background listening. The neural Piper
+# engine gives Celine a natural British female voice; the built-in Windows
+# SAPI engine remains available as an explicit fallback.
+VOICE_ENABLED = True
+VOICE_ENGINE = "piper"
+# SAPI-style rate: an integer from -10 (slowest) to 10 (fastest); 0 is normal.
+# For Piper this is mapped to a length scale; volume is a percentage 0..100.
 VOICE_RATE = 0
 VOICE_VOLUME = 100
 # Celine is written for a British female voice. If that locale is not
-# installed, the layer falls back honestly rather than misreporting the voice.
+# available, the layer falls back honestly rather than misreporting the voice.
 VOICE_PREFERRED_LOCALE = "en-GB"
 VOICE_FALLBACK_LOCALE = "en-US"
 VOICE_PREFER_FEMALE = True
+# Neural Piper voice. The path is trusted local configuration (relative paths
+# resolve against the project root), never anything the model can supply.
+VOICE_PIPER_MODEL = "models/piper/en_GB-cori-medium.onnx"
+VOICE_PIPER_VOICE = "en_GB-cori-medium"
+VOICE_PIPER_GENDER = "Female"
+# When Piper is unavailable (missing dependency or model), Celine may speak
+# with the built-in Windows SAPI engine instead. The announcement stays honest
+# about the voice actually used, so an American fallback is never called
+# British. Set to False to stay silent instead of falling back.
+VOICE_ALLOW_FALLBACK = True
+VOICE_FALLBACK_ENGINE = "piper"
