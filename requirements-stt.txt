@@ -1,0 +1,9 @@
+# Optional offline speech-to-text (Milestone 5.2).
+# Not required for the core assistant. Install with:
+#   .venv\Scripts\python.exe -m pip install -r requirements-stt.txt
+# Then download the British English speech model into models/stt (see the
+# README "Microphone input" section for the exact commands).
+# vosk pulls cffi, requests, tqdm, srt, and websockets automatically, and the
+# sounddevice wheel bundles PortAudio on Windows.
+vosk
+sounddevice

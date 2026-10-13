@@ -10,6 +10,27 @@ DOCX saving.
 
 ## Current milestone
 
+**Milestone 5.2A — microphone diagnostics and accuracy.**
+When a transcript looks wrong, two read-only commands help you find the cause:
+`/mic-devices` lists input devices and `/mic-test` records one bounded clip and
+prints privacy-safe level statistics (RMS/peak dBFS, silence, clipping, estimated
+SNR, dropped frames) and a plain-language assessment, plus the transcript. Neither
+command sends anything to the assistant. Capture now negotiates the device rate
+(properly resampling rather than relabelling), downmixes multi-channel input to
+mono, discards a short warm-up, and can optionally save one confirmed clip as a
+local WAV fixture for repeatable model comparison. Celine never changes Windows
+microphone settings or auto-increases gain; nothing is downloaded without your
+approval.
+
+**Milestone 5.2 — offline speech-to-text and push-to-talk input.**
+Celine can now accept a spoken request from the microphone. Type `/mic`, speak
+one short bounded clip, and Celine transcribes it locally (**Vosk**,
+`vosk-model-small-en-gb-0.15`) and shows you the text; it reaches the assistant
+only after you confirm it. You can re-record or cancel, an empty transcript is
+discarded, and typed input keeps working exactly as before. Microphone input is
+off by default (`MICROPHONE_ENABLED = False`), there is no wake word and no
+background listening, and nothing is uploaded: recognition is entirely offline.
+
 **Milestone 5.1B — natural British female voice.**
 Celine now speaks her final replies with an offline neural British female voice
 (**Piper**, `en_GB-cori-medium`) instead of the robotic Microsoft Zira SAPI
@@ -208,6 +229,93 @@ To add a genuine British SAPI voice as well, open **Settings → Time & language
 → Speech → Voices → Add voices** and install an English (United Kingdom)
 voice; the SAPI fallback will then use it automatically.
 
+## Microphone input (offline speech-to-text, opt-in)
+
+Celine can transcribe one spoken request locally and treat it like typed input.
+This is off by default. Enable it in `src/celine/core/config.py`:
+
+```python
+MICROPHONE_ENABLED = False            # set True to allow /mic
+MICROPHONE_COMMANDS = ("/mic",)       # typed command that starts a recording
+MICROPHONE_DIAGNOSTICS = True         # allow /mic-test and /mic-devices
+MICROPHONE_TEST_COMMAND = "/mic-test"
+MICROPHONE_DEVICES_COMMAND = "/mic-devices"
+MICROPHONE_SAMPLE_RATE = 16000
+MICROPHONE_CHANNELS = 1
+MICROPHONE_MAX_SECONDS = 6            # hard ceiling per recording
+MICROPHONE_WARMUP_SECONDS = 0.15      # discard device startup artefacts
+MICROPHONE_DEVICE = None              # None = system default input device
+STT_ENGINE = "vosk"
+STT_VOSK_MODEL = "models/stt/vosk-model-small-en-gb-0.15"  # trusted path
+STT_VOSK_LOCALE = "en-GB"
+STT_VOCABULARY = []                   # optional bias toward expected words
+STT_MIN_CHARS = 2                     # shorter transcripts are treated as empty
+MICROPHONE_SAVE_FIXTURES = False      # opt-in WAV fixtures for model comparison
+MICROPHONE_FIXTURE_DIR = "models/stt/fixtures"
+```
+
+With it enabled, type `/mic` at the prompt:
+
+```text
+You: /mic
+[mic] Recording for up to 6s - please speak now.
+[mic] You said: "open notepad"
+[mic] [Enter] send, 'r' record again, 'c' cancel:
+```
+
+Press Enter to send, `r` to record again, or `c` to cancel (press `Ctrl+C`
+while recording to abort it). The microphone is opened only for the one bounded
+clip and is always released afterwards. An empty or too-short transcript is
+discarded without reaching Ollama. Typed input is unaffected; the model can
+never supply a device or model path.
+
+Install the optional speech-to-text dependency and model once:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-stt.txt
+Invoke-WebRequest https://alphacephei.com/vosk/models/vosk-model-small-en-gb-0.15.zip -OutFile stt.zip
+Expand-Archive stt.zip -DestinationPath models/stt
+Remove-Item stt.zip
+```
+
+This adds `vosk` (~14 MB, with `cffi`, `tqdm`, `srt`, `websockets`) and
+`sounddevice` (~1 MB, bundled PortAudio) and downloads the British English
+model (~43 MB). The model directory is git-ignored. If Vosk or the model is
+missing, `/mic` reports the problem and Celine keeps working with typed input.
+
+### Microphone diagnostics and accuracy
+
+When a transcript looks wrong, `MICROPHONE_ENABLED = True` also unlocks two
+read-only commands. Neither command sends anything to the assistant, runs a
+tool, or saves audio unless you explicitly opt in:
+
+```text
+You: /mic-devices   # list input devices, record nothing
+You: /mic-test      # record one bounded clip and report its signal + transcript
+```
+
+`/mic-test` captures up to `MICROPHONE_MAX_SECONDS`, prints privacy-safe level
+statistics (duration, rate/channel conversion, RMS/peak dBFS, silence %, clipping
+%, estimated SNR, dropped frames) and a plain-language assessment such as
+"mostly silence", "high background noise", "clipped", "quiet but present", or
+"valid audio for recognition", followed by the transcript. The text is shown for
+diagnosis only and is never executed.
+
+Capture always negotiates against the device: the recogniser rate (16 kHz) is
+used when the device supports it, otherwise the device's native rate is captured
+and **properly resampled** (never merely relabelled), and multi-channel input is
+downmixed to mono. To build a repeatable comparison set, set
+`MICROPHONE_SAVE_FIXTURES = True` and answer `y` at the per-clip prompt; Celine
+then writes one mono 16-bit WAV per confirmed clip into `MICROPHONE_FIXTURE_DIR`
+(git-ignored, local only, never uploaded). Delete the files or the folder any
+time to remove them.
+
+Celine never changes Windows microphone settings or auto-increases gain; if the
+level is low, raise the Windows input level yourself and re-run `/mic-test`.
+Accuracy is limited by the small generic Vosk model — a larger English model
+trades disk and CPU for fewer errors, but nothing is downloaded without your
+approval.
+
 For read-only Word integration diagnostics, run:
 
 ```powershell
@@ -253,6 +361,13 @@ src/celine/
       __init__.py      # VoiceInfo + SpeechEngine protocol (shared boundary)
       piper_engine.py  # offline neural Piper engine (ONNX + winsound)
       windows_sapi.py  # offline Windows SAPI engine (pywin32/COM)
+    input/
+      __init__.py      # Recording + Recorder/Transcriber protocols
+      audio.py         # PCM convert/downmix/resample + safe level statistics
+      microphone.py    # bounded sounddevice capture (no background listening)
+      transcription.py # offline Vosk speech recognition
+      push_to_talk.py  # record once, transcribe, confirm before sending
+      diagnostics.py   # read-only /mic-test and /mic-devices (opt-in, no sending)
   tools/
     system_time.py     # get_current_time implementation
     windows_apps.py    # open_application allowlist + launcher (no shell)
@@ -278,17 +393,23 @@ tests/
   test_agent_tool_selection.py
   test_voice.py
   test_piper_engine.py
+  test_voice_input.py
+  test_voice_audio.py
+  test_voice_diagnostics.py
 run.py                 # launcher: puts src/ on the path, starts main
 pytest.ini             # test config (src/ on path, tests/ folder)
 requirements.txt       # core dependencies
 requirements-voice.txt # optional neural voice dependencies (Piper)
+requirements-stt.txt   # optional offline speech-to-text dependencies (Vosk)
 ```
 
 ### Execution flow
 
 1. `run.py` starts `main.main()` (src/ on `sys.path`).
 2. `main.py` builds an `Assistant(chat=ollama_client.chat)` and loops on
-   user input.
+   user input. Typing a microphone command (e.g. `/mic`) records one bounded
+   clip, transcribes it locally, and — after confirmation — feeds the text
+   through the exact same path as typed input.
 3. `assistant.py` appends the user message, calls the model, and — if the
    model requests a tool — validates and runs it via `registry.py`,
    appends a `role: "tool"` result, and calls the model again
@@ -344,8 +465,15 @@ requirements-voice.txt # optional neural voice dependencies (Piper)
 - Optional offline voice output: Celine speaks her final reply with a neural
   British female voice (Piper, `en_GB-cori-medium`), falling back to the Windows
   SAPI voice when Piper is unavailable. Only the final user-facing reply is
-  spoken; there is no microphone, speech recognition, wake word, or background
-  listening.
+  spoken; there is no wake word or background listening.
+- Optional offline push-to-talk input: type `/mic` to record one bounded clip
+  that is transcribed locally (Vosk) and shown for confirmation before it is
+  used. Off by default; typed input is unaffected.
+- Read-only microphone diagnostics: `/mic-devices` lists input devices and
+  `/mic-test` records one bounded clip and reports privacy-safe level statistics
+  plus the transcript, without sending anything or changing Windows settings.
+  Capture negotiates the device rate (properly resampling, never relabelling),
+  downmixes to mono, and rejects empty/short transcripts before Ollama.
 - Automated tests that need no running Ollama server (`pytest`)
 
 ## Current limitations
@@ -366,11 +494,15 @@ requirements-voice.txt # optional neural voice dependencies (Piper)
 - No arbitrary titles, regular expressions, process IDs, or window handles
 - No process termination or force-killing
 - No other file access, shell/PowerShell execution, or web search
-- Voice is text-to-speech output only: no speech-to-text, microphone input,
-  wake word, or background listening. The neural Piper voice requires a
-  one-time optional dependency and model download (see "Voice output"). If
-  Piper is unavailable, Celine may fall back to the installed en-US SAPI voice
-  and always says so honestly.
+- Voice is not hands-free: microphone input is opt-in and push-to-talk only —
+  one bounded clip per request, started by typing a command (`/mic` to capture,
+  `/mic-devices`/`/mic-test` for read-only diagnostics). There is no wake
+  word, no continuous or background listening, and no speech command is acted
+  on without explicit confirmation. Speech recognition is English-only and
+  offline. Celine never changes Windows microphone settings or gain. The neural
+  Piper voice requires a one-time optional dependency and
+  model download (see "Voice output"). If Piper is unavailable, Celine may fall
+  back to the installed en-US SAPI voice and always says so honestly.
 - No persistent memory or database
 - Chat history is lost when the program exits
 - Privacy: the current chat runs locally through Ollama, but Celine

@@ -1,8 +1,8 @@
-"""Celine's offline voice output (text-to-speech only).
+"""Celine's offline voice output (text-to-speech).
 
-This milestone implements spoken replies only. There is no microphone input,
-speech recognition, wake word, or background listening anywhere in this
-package. Speech is off by default (see ``config.VOICE_ENABLED``).
+This package holds the output side: spoken replies only. Microphone input lives
+in the separate, opt-in ``celine.voice.input`` subpackage, which never listens
+in the background. Speech output is off by default (see ``config.VOICE_ENABLED``).
 """
 
 from celine.voice.tts import (

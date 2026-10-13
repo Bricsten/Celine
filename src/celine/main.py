@@ -11,7 +11,16 @@ from celine.voice import Speaker
 def main():
     assistant = Assistant(chat=ollama_client.chat)
     speaker = Speaker()
+    listener = None
     print("Celine is ready. Type 'exit' or 'quit' to close. (Ctrl+C also works)")
+    if config.MICROPHONE_ENABLED:
+        commands = " or ".join(config.MICROPHONE_COMMANDS)
+        print(f"Type {commands} to speak instead of typing.")
+        if config.MICROPHONE_DIAGNOSTICS:
+            print(
+                f"Type {config.MICROPHONE_TEST_COMMAND} to test the microphone "
+                f"or {config.MICROPHONE_DEVICES_COMMAND} to list input devices."
+            )
 
     try:
         while True:
@@ -26,6 +35,16 @@ def main():
             if user_text.lower() in ("exit", "quit"):
                 print("Goodbye.")
                 break
+            if user_text.lower() in config.MICROPHONE_COMMANDS:
+                listener, user_text = _listen_once(listener)
+                if not user_text:
+                    continue
+            elif user_text.lower() == config.MICROPHONE_TEST_COMMAND:
+                listener = _diagnose_mic(listener)
+                continue
+            elif user_text.lower() == config.MICROPHONE_DEVICES_COMMAND:
+                _list_mic_devices()
+                continue
 
             try:
                 reply = assistant.ask(user_text)
@@ -58,7 +77,49 @@ def main():
                 print(f"Celine: {reply}")
                 _speak_reply(speaker, reply)
     finally:
+        if listener is not None:
+            listener.shutdown()
         speaker.shutdown()
+
+
+def _listen_once(listener):
+    """Run one push-to-talk capture; return ``(listener, text or "")``."""
+    from celine.voice.input import PushToTalk, run_push_to_talk
+
+    if listener is None:
+        listener = PushToTalk()
+    text = run_push_to_talk(listener)
+    return listener, text or ""
+
+
+def _require_microphone():
+    if not config.MICROPHONE_ENABLED:
+        print("[mic] Microphone input is off. Set MICROPHONE_ENABLED = True.")
+        return False
+    return True
+
+
+def _diagnose_mic(listener):
+    """Run read-only diagnostics; never sends text to the assistant."""
+    if not _require_microphone():
+        return listener
+    if not config.MICROPHONE_DIAGNOSTICS:
+        print("[mic] Diagnostics are off. Set MICROPHONE_DIAGNOSTICS = True.")
+        return listener
+    from celine.voice.input import PushToTalk, run_mic_test
+
+    if listener is None:
+        listener = PushToTalk()
+    run_mic_test(listener)
+    return listener
+
+
+def _list_mic_devices():
+    if not _require_microphone():
+        return
+    from celine.voice.input import run_mic_devices
+
+    run_mic_devices()
 
 
 def _speak_reply(speaker, reply):

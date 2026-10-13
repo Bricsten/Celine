@@ -29,11 +29,11 @@ PERF_LOG = False
 # [tool] lines for tool requests. No model reasoning is logged.
 TOOL_LOG = False
 
-# --- Voice output (offline text-to-speech only) --------------------------
-# Speech is optional. This milestone adds spoken replies only: no microphone,
-# speech recognition, wake word, or background listening. The neural Piper
-# engine gives Celine a natural British female voice; the built-in Windows
-# SAPI engine remains available as an explicit fallback.
+# --- Voice output (offline text-to-speech) -------------------------------
+# Speech output is optional. The neural Piper engine gives Celine a natural
+# British female voice; the built-in Windows SAPI engine remains available as
+# an explicit fallback. Microphone input is separate and opt-in (see the
+# "Microphone input" section below).
 VOICE_ENABLED = True
 VOICE_ENGINE = "piper"
 # SAPI-style rate: an integer from -10 (slowest) to 10 (fastest); 0 is normal.
@@ -55,4 +55,43 @@ VOICE_PIPER_GENDER = "Female"
 # about the voice actually used, so an American fallback is never called
 # British. Set to False to stay silent instead of falling back.
 VOICE_ALLOW_FALLBACK = True
-VOICE_FALLBACK_ENGINE = "piper"
+VOICE_FALLBACK_ENGINE = "windows_sapi"
+
+# --- Microphone input (offline speech-to-text, opt-in) -------------------
+# Push-to-talk microphone input is off by default and must be enabled
+# explicitly. Speech is transcribed locally (Vosk); nothing is sent anywhere,
+# and typed input keeps working exactly as before. There is no wake word and
+# no continuous or background listening: a recording starts only when asked.
+MICROPHONE_ENABLED = True
+# Typed commands that start one recording. Typing is unaffected otherwise.
+MICROPHONE_COMMANDS = ("/mic",)
+# Read-only diagnostics (`/mic-test`) and device listing (`/mic-devices`).
+# Both require MICROPHONE_ENABLED and never send anything to the assistant.
+MICROPHONE_DIAGNOSTICS = True
+MICROPHONE_TEST_COMMAND = "/mic-test"
+MICROPHONE_DEVICES_COMMAND = "/mic-devices"
+MICROPHONE_SAMPLE_RATE = 16000
+MICROPHONE_CHANNELS = 1
+# Hard ceiling on a single recording; the microphone is always released after.
+# Recording runs for this long (or until Ctrl+C), then Celine transcribes it.
+MICROPHONE_MAX_SECONDS = 6
+# Short capture warm-up: discard this many seconds at the start of the stream so
+# the first samples are not device startup artefacts. 0 disables it.
+MICROPHONE_WARMUP_SECONDS = 0.15
+# Optional input device index/name; None uses the system default input device.
+MICROPHONE_DEVICE = None
+# Offline speech-to-text. The model path is trusted local configuration and is
+# never supplied by the model; relative paths resolve against the project root.
+STT_ENGINE = "vosk"
+STT_VOSK_MODEL = "models/stt/vosk-model-small-en-gb-0.15"
+STT_VOSK_LOCALE = "en-GB"
+# Optional word list to bias recognition toward expected commands. Empty means
+# full, general transcription (recommended unless commands are very limited).
+STT_VOCABULARY = []
+# Transcripts shorter than this are treated as empty and never reach Ollama.
+STT_MIN_CHARS = 2
+# Off by default: when True, `/mic-test` may save one clip as a WAV fixture
+# (after an explicit per-clip confirmation) for repeatable model comparison.
+# Fixtures are local, git-ignored, never uploaded, and can be deleted any time.
+MICROPHONE_SAVE_FIXTURES = False
+MICROPHONE_FIXTURE_DIR = "models/stt/fixtures"
