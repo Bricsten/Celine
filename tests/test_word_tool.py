@@ -451,6 +451,8 @@ def test_word_production_path_has_no_prohibited_calls():
     assert prohibited_calls.isdisjoint(calls)
     assert calls.count("Add") == 1
     assert calls.count("Activate") == 1
+    assert calls.count("SaveAs2") == 1
+    assert {"remove", "unlink", "Delete"}.isdisjoint(calls)
     for prohibited_text in (
         "application.Hwnd",
         "ActiveWindow",

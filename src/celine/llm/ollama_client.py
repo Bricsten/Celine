@@ -17,6 +17,17 @@ class OllamaResponseError(Exception):
     """Ollama's answer could not be used (bad JSON or unexpected shape)."""
 
 
+class OllamaTimeoutError(Exception):
+    """Ollama did not answer before the configured request deadline."""
+
+    is_timeout = True
+
+    def __init__(self, message):
+        super().__init__(message)
+        self.after_tool_result = False
+        self.tool_results = ()
+
+
 def chat(messages, tools):
     """Send one /api/chat request and return Ollama's message dict."""
     payload = {
@@ -24,6 +35,14 @@ def chat(messages, tools):
         "messages": messages,
         "tools": tools,
         "stream": False,
+        # Celine needs concise tool selection, not an unbounded reasoning pass.
+        "think": False,
+        # Keep the model loaded so interactive turns avoid a cold load.
+        "keep_alive": config.OLLAMA_KEEP_ALIVE,
+        "options": {
+            "temperature": config.OLLAMA_TEMPERATURE,
+            "num_predict": config.OLLAMA_NUM_PREDICT,
+        },
     }
 
     try:
@@ -34,6 +53,8 @@ def chat(messages, tools):
         )
         response.raise_for_status()
         data = response.json()
+    except requests.exceptions.Timeout as exc:
+        raise OllamaTimeoutError(str(exc)) from exc
     except requests.exceptions.ConnectionError as exc:
         raise OllamaConnectionError(str(exc)) from exc
     except requests.exceptions.HTTPError as exc:

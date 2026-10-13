@@ -31,6 +31,20 @@ SCENARIOS = (
         ["open_application", "create_word_document", "write_word_text"],
     ),
     ("Create a blank Word document.", ["create_word_document"]),
+    ("Save this as Letter.docx in Documents.", ["save_word_document"]),
+    (
+        "Save this document as Celine Formatting Test.docx in Documents.",
+        ["save_word_document"],
+    ),
+    (
+        'Open Word, write "Hello", and save it as Hello.docx in Documents.',
+        [
+            "open_application",
+            "create_word_document",
+            "write_word_text",
+            "save_word_document",
+        ],
+    ),
     ("Minimize Word.", ["control_window"]),
     ('Write "Hello" in Notepad.', ["write_text"]),
 )

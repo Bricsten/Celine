@@ -10,8 +10,18 @@ from celine.tools.system_time import get_current_time
 from celine.tools.text_input import APPROVED_MODES, write_text
 from celine.tools.window_control import control_window
 from celine.tools.windows_apps import normalize_name, open_application
-from celine.tools.word import create_word_document, write_word_text
-from celine.tools.word.adapter import APPROVED_WORD_MODES
+from celine.tools.word import (
+    add_word_block,
+    create_word_document,
+    save_word_document,
+    write_word_text,
+)
+from celine.tools.word.adapter import (
+    APPROVED_WORD_ALIGNMENTS,
+    APPROVED_WORD_MODES,
+    APPROVED_WORD_STYLES,
+)
+from celine.tools.word.folders import APPROVED_SAVE_FOLDERS
 
 # Tool registry: the ONLY functions Celine is ever allowed to run.
 # The model asks for a tool by name; nothing not listed here can execute.
@@ -22,6 +32,8 @@ TOOL_REGISTRY = {
     "write_text": write_text,
     "write_word_text": write_word_text,
     "create_word_document": create_word_document,
+    "save_word_document": save_word_document,
+    "add_word_block": add_word_block,
 }
 
 # Tools that accept a JSON object of arguments. Every other tool must be
@@ -33,6 +45,8 @@ TOOL_ARGUMENTS = {
     "control_window": frozenset({"application", "action"}),
     "write_text": frozenset({"application", "text", "mode"}),
     "write_word_text": frozenset({"text", "mode"}),
+    "save_word_document": frozenset({"filename", "folder"}),
+    "add_word_block": frozenset({"text", "style", "alignment"}),
 }
 
 TOOL_ARGUMENT_TYPES = {
@@ -40,6 +54,8 @@ TOOL_ARGUMENT_TYPES = {
     "control_window": {"application": str, "action": str},
     "write_text": {"application": str, "text": str, "mode": str},
     "write_word_text": {"text": str, "mode": str},
+    "save_word_document": {"filename": str, "folder": str},
+    "add_word_block": {"text": str, "style": str, "alignment": str},
 }
 
 # Tool schemas: a JSON description of each tool, sent to Ollama so the
@@ -49,10 +65,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "get_current_time",
-            "description": (
-                "Return the current local system time as a string. "
-                "Takes no arguments."
-            ),
+            "description": "Return the current local system time.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -65,22 +78,16 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "open_application",
             "description": (
-                "Use only to launch an approved Windows application. Do not "
-                "use this tool if the user only asked to act inside an "
-                "application that may already be running. "
-                "Launching Word does not create a Word document. "
-                "Approved names: notepad, calculator, word, file_explorer. "
-                "Takes a single string argument: name."
+                "Use only to launch an approved app: notepad, calculator, "
+                "word, or file_explorer. If the user only asked to act inside "
+                "an app, do not use it. Launching Word creates no document."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": (
-                            "The approved application name, "
-                            "e.g. 'notepad'."
-                        ),
+                        "description": "Approved app name, e.g. 'notepad'.",
                     },
                 },
                 "required": ["name"],
@@ -93,12 +100,8 @@ TOOL_SCHEMAS = [
             "name": "control_window",
             "description": (
                 "Use for window actions only; do not launch an application "
-                "first unless the user explicitly requested it. Minimize, "
-                "restore, focus, or gracefully close the visible "
-                "top-level window of one approved Windows application. "
-                "Approved applications: notepad, calculator, word, "
-                "file_explorer. Approved actions: minimize, restore, focus, "
-                "close."
+                "first unless explicitly requested. Safely minimize, restore, "
+                "focus, or close one approved app window."
             ),
             "parameters": {
                 "type": "object",
@@ -116,13 +119,9 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "write_text",
             "description": (
-                "Use directly when the user asks to write in an already-"
-                "running Notepad; do not launch Notepad first unless the "
-                "user explicitly requested it. Use append for normal "
-                "writing, or new_line "
-                "to add exactly one line break before the text when the "
-                "document is non-empty. This tool does not open, read, or "
-                "save the application."
+                "Use directly for Notepad writing; do not launch Notepad first "
+                "unless requested. Modes: append or new_line. Does not read "
+                "or save."
             ),
             "parameters": {
                 "type": "object",
@@ -144,14 +143,10 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "write_word_text",
             "description": (
-                "Use directly when the user asks to write or add text in an "
-                "already-running Microsoft Word document. It requires "
-                "exactly one already-open editable document and refuses if "
-                "no document is open. This tool does not launch Word. Use "
-                "append to add "
-                "text at the document end, or new_paragraph to add one new "
-                "paragraph. This tool does not open, create, read, format, "
-                "or save documents."
+                "Use directly for plain text in one safe editable Word "
+                "document. Modes: append or new_paragraph. It refuses if no "
+                "document is open and does not launch Word, create, read, "
+                "format, or save."
             ),
             "parameters": {
                 "type": "object",
@@ -172,14 +167,65 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "create_word_document",
             "description": (
-                "Create one blank unsaved document in an already-running "
-                "safe Microsoft Word instance when no document is currently "
-                "open. Does not launch Word or save. Takes no arguments."
+                "Create one blank unsaved document in safe running Word only "
+                "when none is open. Does not launch Word or save."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {},
                 "required": [],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_word_block",
+            "description": (
+                "Add one new fixed-style/aligned block to one safe editable "
+                "Word document. Use for new headings, titles, or formatted "
+                "paragraphs. Does not reformat existing text, launch, create, "
+                "or save."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "style": {
+                        "type": "string",
+                        "enum": ["normal", "heading_1", "heading_2", "title"],
+                    },
+                    "alignment": {
+                        "type": "string",
+                        "enum": ["left", "center", "right", "justify"],
+                    },
+                },
+                "required": ["text", "style", "alignment"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_word_document",
+            "description": (
+                "Use directly for save/save-as. Save one safe already-open Word "
+                "document as DOCX in documents, desktop, or downloads. It may "
+                "predate Celine. Do not create/write first or ask whether Word "
+                "is open; this tool checks. Never overwrites."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string"},
+                    "folder": {
+                        "type": "string",
+                        "enum": ["documents", "desktop", "downloads"],
+                    },
+                },
+                "required": ["filename", "folder"],
                 "additionalProperties": False,
             },
         },
@@ -276,6 +322,34 @@ def run_tool_call(tool_call):
     ):
         return name, _bad_arguments(
             name, "mode must be one of: " + ", ".join(APPROVED_WORD_MODES)
+        )
+
+    if (
+        name == "save_word_document"
+        and arguments["folder"] not in APPROVED_SAVE_FOLDERS
+    ):
+        return name, _bad_arguments(
+            name,
+            "folder must be one of: " + ", ".join(APPROVED_SAVE_FOLDERS),
+        )
+
+    if (
+        name == "add_word_block"
+        and arguments["style"] not in APPROVED_WORD_STYLES
+    ):
+        return name, _bad_arguments(
+            name,
+            "style must be one of: " + ", ".join(APPROVED_WORD_STYLES),
+        )
+
+    if (
+        name == "add_word_block"
+        and arguments["alignment"] not in APPROVED_WORD_ALIGNMENTS
+    ):
+        return name, _bad_arguments(
+            name,
+            "alignment must be one of: "
+            + ", ".join(APPROVED_WORD_ALIGNMENTS),
         )
 
     try:

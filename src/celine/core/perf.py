@@ -34,25 +34,57 @@ class PerfLog:
         """Seconds elapsed since now() was called."""
         return time.perf_counter() - started
 
-    def add_ollama_call(self, seconds):
+    def add_ollama_call(
+        self,
+        seconds,
+        *,
+        round_number=None,
+        message_count=None,
+        message_chars=None,
+        tool_count=None,
+        tool_chars=None,
+        after_tool_result=None,
+        timed_out=None,
+    ):
         if not self.enabled:
             return
         self._ollama_calls += 1
-        self._events.append((f"ollama_call_{self._ollama_calls}", seconds))
+        metadata = []
+        for key, value in (
+            ("round", round_number),
+            ("messages", message_count),
+            ("approx_message_chars", message_chars),
+            ("tools", tool_count),
+            ("approx_tool_chars", tool_chars),
+        ):
+            if value is not None:
+                metadata.append(f"{key}={value}")
+        if after_tool_result is not None:
+            metadata.append(
+                f"after_tool_result={str(after_tool_result).lower()}"
+            )
+        if timed_out is not None:
+            metadata.append(f"timed_out={str(timed_out).lower()}")
+        self._events.append((
+            f"ollama_call_{self._ollama_calls}",
+            seconds,
+            " ".join(metadata),
+        ))
 
     def add_tool_call(self, name, seconds):
         if not self.enabled:
             return
         self._tool_calls += 1
-        self._events.append((f"tool:{name}", seconds))
+        self._events.append((f"tool:{name}", seconds, ""))
 
     def finish(self):
         """Print the report, then reset for the next request."""
         if not self.enabled or self._started is None:
             return
         total = time.perf_counter() - self._started
-        for label, seconds in self._events:
-            print(f"[perf] {label}={_fmt(seconds)}s")
+        for label, seconds, metadata in self._events:
+            suffix = f" {metadata}" if metadata else ""
+            print(f"[perf] {label}={_fmt(seconds)}s{suffix}")
         print(
             f"[perf] total={_fmt(total)}s "
             f"ollama_calls={self._ollama_calls} "

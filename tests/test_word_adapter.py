@@ -7,6 +7,8 @@ from celine.tools.word.adapter import (
     CREATION_ACTIVATION_FAILED,
     CREATION_FAILED,
     CREATION_UNCONFIRMED,
+    SAVE_FAILED,
+    WD_FORMAT_DOCUMENT_DEFAULT,
     WRITE_FAILED,
     ComWordAdapter,
     WordAdapterError,
@@ -124,10 +126,13 @@ class FakeDocument:
         window_hwnd=101,
         expose_window_hwnd=True,
         window_activate_error=None,
+        save_error=None,
     ):
         self.Content = content or FakeRange()
         self.ReadOnly = read_only
         self.ProtectionType = protection_type
+        self.save_error = save_error
+        self.save_calls = []
         self.Windows = FakeCollection([
             FakeComWindow(
                 window_hwnd,
@@ -136,6 +141,11 @@ class FakeDocument:
             )
             for _ in range(window_count)
         ])
+
+    def SaveAs2(self, path, file_format):
+        self.save_calls.append((path, file_format))
+        if self.save_error:
+            raise self.save_error
 
 
 class FakeApplication:
@@ -659,3 +669,70 @@ def test_created_document_window_activation_failure_is_partial_success():
     assert "was created" in error.user_message
     assert documents.add_calls == 1
     assert document.Windows.Item(1).activate_calls == 1
+
+
+def test_save_uses_one_fixed_save_as_call_with_docx_format():
+    document = FakeDocument()
+    adapter, runtime, _ = make_adapter(
+        application=FakeApplication(documents=[document])
+    )
+    adapter.save_document(r"C:\Trusted\Letter.docx")
+    assert document.save_calls == [
+        (r"C:\Trusted\Letter.docx", WD_FORMAT_DOCUMENT_DEFAULT)
+    ]
+    assert WD_FORMAT_DOCUMENT_DEFAULT == 16
+    assert runtime.initialized == runtime.uninitialized == 1
+
+
+def test_save_com_exception_is_unconfirmed_and_not_retried():
+    document = FakeDocument(save_error=FakeComError("uncertain"))
+    adapter, runtime, _ = make_adapter(
+        application=FakeApplication(documents=[document])
+    )
+    with pytest.raises(WordAdapterError) as caught:
+        adapter.save_document(r"C:\Trusted\Letter.docx")
+    assert caught.value.reason == "save_error"
+    assert caught.value.outcome == SAVE_FAILED
+    assert document.save_calls == [
+        (r"C:\Trusted\Letter.docx", WD_FORMAT_DOCUMENT_DEFAULT)
+    ]
+    assert runtime.initialized == runtime.uninitialized == 1
+
+
+@pytest.mark.parametrize(
+    ("application", "handles", "reason"),
+    [
+        (FakeApplication(), [], "word_not_open"),
+        (FakeApplication(documents=[]), [101], "no_document"),
+        (FakeApplication(), [101, 202], "ambiguous_word_target"),
+        (
+            FakeApplication(window_hwnd=202),
+            [101],
+            "application_window_hwnd_mismatch",
+        ),
+        (
+            FakeApplication(protected_view_count=1),
+            [101],
+            "protected_view",
+        ),
+        (
+            FakeApplication(documents=[FakeDocument(read_only=True)]),
+            [101],
+            "read_only_document",
+        ),
+        (
+            FakeApplication(documents=[FakeDocument(protection_type=0)]),
+            [101],
+            "protected_document",
+        ),
+    ],
+)
+def test_save_reuses_strict_word_target_validation(
+    application, handles, reason
+):
+    adapter, _, _ = make_adapter(application=application, handles=handles)
+    with pytest.raises(WordAdapterError) as caught:
+        adapter.save_document(r"C:\Trusted\Letter.docx")
+    assert caught.value.reason == reason
+    for document in application.Documents.items:
+        assert document.save_calls == []

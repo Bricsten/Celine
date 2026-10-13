@@ -1,5 +1,7 @@
 """Tests for the optional performance instrumentation. No server needed."""
 
+import pytest
+
 from celine.core import config
 from celine.core.assistant import Assistant
 from celine.core.perf import PerfLog
@@ -71,3 +73,36 @@ def test_assistant_prints_no_perf_when_flag_disabled(monkeypatch, capsys):
 
     assert reply == "Hi."
     assert "[perf]" not in capsys.readouterr().out
+
+
+def test_assistant_perf_reports_safe_context_metadata(monkeypatch, capsys):
+    monkeypatch.setattr(config, "PERF_LOG", True)
+    assistant = Assistant(
+        chat=FakeChat({"role": "assistant", "content": "Done."})
+    )
+    assistant.ask("Private request text")
+    output = capsys.readouterr().out
+    assert "round=1" in output
+    assert "messages=2" in output
+    assert "approx_message_chars=" in output
+    assert "tools=8" in output
+    assert "approx_tool_chars=" in output
+    assert "after_tool_result=false" in output
+    assert "timed_out=false" in output
+    assert "Private request text" not in output
+
+
+def test_timeout_perf_reports_stage_without_private_text(monkeypatch, capsys):
+    from celine.llm.ollama_client import OllamaTimeoutError
+
+    monkeypatch.setattr(config, "PERF_LOG", True)
+
+    def timeout_chat(messages, tools):
+        raise OllamaTimeoutError("deadline")
+
+    with pytest.raises(OllamaTimeoutError):
+        Assistant(chat=timeout_chat).ask("Private timeout request")
+    output = capsys.readouterr().out
+    assert "timed_out=true" in output
+    assert "after_tool_result=false" in output
+    assert "Private timeout request" not in output

@@ -2,8 +2,12 @@
 
 from datetime import datetime
 
-from celine.core import prompts
-from celine.core.assistant import Assistant
+import pytest
+
+from celine.core import config, prompts
+from celine.core.assistant import Assistant, _drop_incomplete_tool_turns
+from celine.llm.ollama_client import OllamaTimeoutError
+from celine.tools import registry
 
 
 class FakeChat:
@@ -65,3 +69,177 @@ def test_prompt_limits_write_text_success_to_confirmed_action():
     assert "does not reveal or confirm the complete document contents" in prompt
     assert "unless a tool has actually read and returned it" in prompt
     assert "information you merely inferred" in prompt
+
+
+def test_timeout_before_tool_selection_is_classified_without_tool_result():
+    def timeout_chat(messages, tools):
+        raise OllamaTimeoutError("timed out")
+
+    assistant = Assistant(chat=timeout_chat)
+    with pytest.raises(OllamaTimeoutError) as caught:
+        assistant.ask("Save the document.")
+    assert caught.value.after_tool_result is False
+    assert caught.value.tool_results == ()
+    assert not any(m.get("role") == "tool" for m in assistant.history)
+
+
+def test_timeout_after_mutation_does_not_duplicate_tool_call(monkeypatch):
+    save_calls = []
+    monkeypatch.setitem(
+        registry.TOOL_REGISTRY,
+        "save_word_document",
+        lambda filename, folder: save_calls.append((filename, folder))
+        or "Microsoft Word document saved successfully.",
+    )
+    responses = iter([
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "function": {
+                    "name": "save_word_document",
+                    "arguments": {
+                        "filename": "Reliable.docx",
+                        "folder": "documents",
+                    },
+                }
+            }],
+        },
+        OllamaTimeoutError("timed out"),
+    ])
+
+    def chat(messages, tools):
+        response = next(responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    with pytest.raises(OllamaTimeoutError) as caught:
+        Assistant(chat=chat).ask("Save this as Reliable.docx in Documents.")
+    assert save_calls == [("Reliable.docx", "documents")]
+    assert caught.value.after_tool_result is True
+    assert caught.value.tool_results == ((
+        "save_word_document",
+        "Microsoft Word document saved successfully.",
+    ),)
+
+
+def test_prior_history_is_bounded_by_complete_turns(monkeypatch):
+    monkeypatch.setattr(config, "MAX_HISTORY_TURNS", 2)
+    monkeypatch.setattr(config, "MAX_HISTORY_CHARS", 10_000)
+    seen = []
+
+    def chat(messages, tools):
+        seen.extend(messages)
+        return {"role": "assistant", "content": "Current reply"}
+
+    assistant = Assistant(chat=chat)
+    for number in range(4):
+        assistant.history.extend([
+            {"role": "user", "content": f"old user {number}"},
+            {"role": "assistant", "content": f"old answer {number}"},
+        ])
+    assistant.ask("current user")
+    contents = [message.get("content") for message in seen]
+    assert "old user 0" not in contents
+    assert "old user 1" not in contents
+    assert "old user 2" in contents
+    assert "old user 3" in contents
+    assert contents[-1] == "current user"
+
+
+def test_oversized_prior_turn_is_dropped_whole(monkeypatch):
+    monkeypatch.setattr(config, "MAX_HISTORY_TURNS", 6)
+    monkeypatch.setattr(config, "MAX_HISTORY_CHARS", 100)
+    seen = []
+
+    def chat(messages, tools):
+        seen.extend(messages)
+        return {"role": "assistant", "content": "Done"}
+
+    assistant = Assistant(chat=chat)
+    assistant.history.extend([
+        {"role": "user", "content": "private prior text " * 20},
+        {"role": "assistant", "content": "prior result"},
+    ])
+    assistant.ask("current")
+    assert [message["role"] for message in seen] == ["system", "user"]
+    assert seen[-1]["content"] == "current"
+
+
+def test_incomplete_tool_sequence_is_not_sent_to_the_model():
+    seen = []
+
+    def chat(messages, tools):
+        seen.extend(messages)
+        return {"role": "assistant", "content": "Hi."}
+
+    assistant = Assistant(chat=chat)
+    assistant.history.extend([
+        {"role": "user", "content": "old request"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "get_current_time", "arguments": {}}}
+            ],
+        },
+    ])
+    assistant.ask("current request")
+
+    # The orphaned tool request is dropped, but both user turns survive.
+    assert not any(message.get("tool_calls") for message in seen)
+    user_texts = [
+        message["content"] for message in seen if message["role"] == "user"
+    ]
+    assert "current request" in user_texts
+    assert "old request" in user_texts
+
+
+def test_drop_incomplete_tool_turns_keeps_complete_exchanges():
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "what time"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "get_current_time", "arguments": {}}}
+            ],
+        },
+        {"role": "tool", "tool_name": "get_current_time", "content": "03:48"},
+        {"role": "assistant", "content": "It is 03:48."},
+    ]
+    assert _drop_incomplete_tool_turns(messages) == messages
+
+
+def test_drop_incomplete_tool_turns_removes_partial_and_stray_results():
+    partial = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "do two things"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "one", "arguments": {}}},
+                {"function": {"name": "two", "arguments": {}}},
+            ],
+        },
+        {"role": "tool", "tool_name": "one", "content": "done"},
+        {"role": "assistant", "content": "finished"},
+    ]
+    assert _drop_incomplete_tool_turns(partial) == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "do two things"},
+        {"role": "assistant", "content": "finished"},
+    ]
+
+    stray = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "hello"},
+        {"role": "tool", "tool_name": "orphan", "content": "orphan"},
+    ]
+    assert _drop_incomplete_tool_turns(stray) == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "hello"},
+    ]
